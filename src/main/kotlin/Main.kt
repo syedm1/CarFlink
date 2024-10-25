@@ -28,19 +28,14 @@ fun main() {
     val transformedCarListingsStream = transformCarListings(carListingsStream)
     val joinedStream = joinCarListingsWithEnrichment(transformedCarListingsStream, carEnrichmentStream)
 
-    val enrichedDataStream = joinedStream
-
     // Use FlinkKafkaProducer to send joined stream data to the Kafka topic
-//    enrichedDataStream.addSink(
-//        FlinkKafkaProducer(
-//            "flink-car-enriched-data",
-//            EnrichedCarDataSerializationSchema(),
-//            kafkaProperties
-//        )
-//    )
-
-    // Print the enriched data to the console using sink
-    enrichedDataStream.print()
+    joinedStream.addSink(
+        FlinkKafkaProducer(
+            "flink-car-enriched-data",
+            EnrichedCarDataSerializationSchema(),
+            kafkaProperties
+        )
+    )
 
     env.execute("Flink Kotlin Kafka Consumer")
 }

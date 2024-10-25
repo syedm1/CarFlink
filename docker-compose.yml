@@ -1,117 +1,98 @@
-version: '3'
+version: "3"
 services:
-  jobmanager:
-    image: flink:latest
-    ports:
-      - "8081:8081"
-    command: jobmanager
-
-  taskmanager:
-    image: flink:latest
-    command: taskmanager
-
   zookeeper:
     image: bitnami/zookeeper:3.9.1
-    tmpfs: "/zktmp"
+    container_name: zookeeper
     environment:
-      ALLOW_ANONYMOUS_LOGIN: 'yes'
+      ALLOW_ANONYMOUS_LOGIN: "yes"
     ports:
       - "2181:2181"
+    networks:
+      - kafka-network
 
-  kafka1:
+  kafka:
     image: bitnami/kafka:3.7.0
+    container_name: kafka
     depends_on:
       - zookeeper
     environment:
-      KAFKA_BROKER_ID: 1
       KAFKA_CFG_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_CFG_LISTENERS: INTERNAL://:9092,EXTERNAL://0.0.0.0:29092
-      KAFKA_CFG_ADVERTISED_LISTENERS: INTERNAL://kafka1:9092,EXTERNAL://localhost:29092
-      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
-      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: INTERNAL
-      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: 'true'
-      ALLOW_PLAINTEXT_LISTENER: 'yes'
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      ALLOW_PLAINTEXT_LISTENER: "yes"
     ports:
       - "9092:9092"
-      - "29092:29092"
-    volumes:
-      - kafka_data1:/bitnami/kafka
-
-  kafka2:
-    image: bitnami/kafka:3.7.0
-    depends_on:
-      - zookeeper
-    environment:
-      KAFKA_BROKER_ID: 2
-      KAFKA_CFG_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_CFG_LISTENERS: INTERNAL://:9093,EXTERNAL://0.0.0.0:29093
-      KAFKA_CFG_ADVERTISED_LISTENERS: INTERNAL://kafka2:9093,EXTERNAL://localhost:29093
-      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
-      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: INTERNAL
-      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: 'true'
-      ALLOW_PLAINTEXT_LISTENER: 'yes'
-    ports:
-      - "9093:9093"
-      - "29093:29093"
-    volumes:
-      - kafka_data2:/bitnami/kafka
-
-  kafka3:
-    image: bitnami/kafka:3.7.0
-    depends_on:
-      - zookeeper
-    environment:
-      KAFKA_BROKER_ID: 3
-      KAFKA_CFG_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_CFG_LISTENERS: INTERNAL://:9094,EXTERNAL://0.0.0.0:29094
-      KAFKA_CFG_ADVERTISED_LISTENERS: INTERNAL://kafka3:9094,EXTERNAL://localhost:29094
-      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
-      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: INTERNAL
-      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: 'true'
-      ALLOW_PLAINTEXT_LISTENER: 'yes'
-    ports:
-      - "9094:9094"
-      - "29094:29094"
-    volumes:
-      - kafka_data3:/bitnami/kafka
+    networks:
+      - kafka-network
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
     depends_on:
-      - kafka1
-      - kafka2
-      - kafka3
+      - kafka
     ports:
       - "8080:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka1:9092,kafka2:9093,kafka3:9094
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
       KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - kafka-network
+
+  python-producer:
+    build:
+      context: ./CarDataProducers
+      dockerfile: Dockerfile
+    container_name: python-producer
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+    networks:
+      - kafka-network
+
+  flink-jobmanager:
+    image: flink:latest
+    container_name: flink-jobmanager
+    ports:
+      - "8081:8081"
+    command: jobmanager
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+    networks:
+      - kafka-network
+
+  flink-taskmanager:
+    image: flink:latest
+    container_name: flink-taskmanager
+    depends_on:
+      - flink-jobmanager
+    command: taskmanager
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 2
+    networks:
+      - kafka-network
 
   flink-job:
     build:
       context: ./
       dockerfile: Dockerfile
+    container_name: flink-job
     depends_on:
-      - jobmanager
-      - taskmanager
-    command: ["bin/flink", "run", "-d", "/flink-job/CarFlink.jar"]
-
-  python-producer:
-    build:
-      context: ./CarDataProducers  # This is the directory where the Python Dockerfile is located
-    depends_on:
-      - kafka1
-      - kafka2
-      - kafka3
+      - flink-jobmanager
+      - flink-taskmanager
+      - kafka
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: "kafka1:9092,kafka2:9093,kafka3:9094"
-    command: ["python", "caraDataStreams.py"]
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+    command: ["flink", "run", "-d", "/opt/flink/usrlib/CarFlink.jar"]
+    networks:
+      - kafka-network
 
-volumes:
-  kafka_data1:
-    driver: local
-  kafka_data2:
-    driver: local
-  kafka_data3:
-    driver: local
+networks:
+  kafka-network:
+    driver: bridge
